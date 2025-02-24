@@ -46,21 +46,32 @@ evaluator = llm.with_structured_output(AnalysisFeedback)
 
 # --- Utility Functions for File Extraction ---
 def extract_text_docx(file_path):
-    doc = docx.Document(file_path)
-    return "\n".join(para.text for para in doc.paragraphs)
+    try:
+        doc = docx.Document(file_path)
+        return "\n".join(para.text for para in doc.paragraphs)
+    except Exception as e:
+        print(f"Error extracting DOCX from {file_path}: {e}")
+        return ""
 
 def extract_text_pdf(file_path):
     text = ""
-    with pdfplumber.open(file_path) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+    except Exception as e:
+        print(f"Error extracting PDF from {file_path}: {e}")
     return text
 
 def extract_text_excel(file_path):
-    df = pd.read_excel(file_path)
-    return df.to_csv(index=False)
+    try:
+        df = pd.read_excel(file_path)
+        return df.to_csv(index=False)
+    except Exception as e:
+        print(f"Error extracting Excel from {file_path}: {e}")
+        return ""
 
 def extract_text_from_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
@@ -78,34 +89,52 @@ def process_folder(folder_path):
     Traverses the folder (and subdirectories). If a zip archive is found, it extracts it and processes its content.
     """
     all_texts = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            if file.lower().endswith(".zip"):
-                with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                    temp_folder = os.path.join(root, "temp_extracted")
-                    os.makedirs(temp_folder, exist_ok=True)
-                    zip_ref.extractall(temp_folder)
-                    extracted_text = process_folder(temp_folder)
-                    all_texts.append(extracted_text)
-            else:
-                text = extract_text_from_file(file_path)
-                if text:
-                    print(f"Extracted text from {file_path} (length {len(text)} characters)")
-                    all_texts.append(text)
+    try:
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                if file.lower().endswith(".zip"):
+                    try:
+                        with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                            temp_folder = os.path.join(root, "temp_extracted")
+                            os.makedirs(temp_folder, exist_ok=True)
+                            zip_ref.extractall(temp_folder)
+                            extracted_text = process_folder(temp_folder)
+                            all_texts.append(extracted_text)
+                    except Exception as e:
+                        print(f"Error processing zip file {file_path}: {e}")
+                else:
+                    text = extract_text_from_file(file_path)
+                    if text:
+                        print(f"Extracted text from {file_path} (length {len(text)} characters)")
+                        all_texts.append(text)
+    except Exception as e:
+        print(f"Error processing folder {folder_path}: {e}")
     return "\n".join(all_texts)
 
 def split_text(text, chunk_size=1000, chunk_overlap=500):
-    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    return splitter.split_text(text)
+    try:
+        splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        return splitter.split_text(text)
+    except Exception as e:
+        print(f"Error splitting text: {e}")
+        return []
 
 def build_vector_store(chunks):
-    embeddings = OpenAIEmbeddings()  # Or choose another embedding provider
-    vectorstore = FAISS.from_texts(chunks, embeddings)
-    return vectorstore
+    try:
+        embeddings = OpenAIEmbeddings()  # Or choose another embedding provider
+        vectorstore = FAISS.from_texts(chunks, embeddings)
+        return vectorstore
+    except Exception as e:
+        print(f"Error building vector store: {e}")
+        return None
 
 def retrieve_relevant_chunks(vectorstore, query, k=5):
-    return vectorstore.similarity_search(query, k=k)
+    try:
+        return vectorstore.similarity_search(query, k=k)
+    except Exception as e:
+        print(f"Error retrieving relevant chunks: {e}")
+        return []
 
 def generate_json_response(retrieved_chunks, user_question, feedback=None):
     """
@@ -135,11 +164,14 @@ def generate_json_response(retrieved_chunks, user_question, feedback=None):
         "  ]\n"
         "}}"
     )
-    prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question", "feedback_text"])
-    prompt_text = prompt.format(context=context, question=user_question, feedback_text=feedback_text)
-    
-    response = llm.invoke([HumanMessage(content=prompt_text)])
-    return response
+    try:
+        prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question", "feedback_text"])
+        prompt_text = prompt.format(context=context, question=user_question, feedback_text=feedback_text)
+        response = llm.invoke([HumanMessage(content=prompt_text)])
+        return response
+    except Exception as e:
+        print(f"Error generating JSON response: {e}")
+        return None
 
 # --- New Tasks for Evaluator–Optimizer Approach ---
 @task
@@ -150,10 +182,22 @@ def llm_generate_analysis_task(retrieved_chunks, user_question, feedback: str = 
 def llm_evaluation_task(response_text: str):
     """
     Evaluates the JSON response using the evaluator with structured output.
+    Checks that the JSON adheres to the expected schema and validity,
+    and also evaluates whether the response from the LLM sufficiently answers the question.
     """
-    evaluation_prompt = f"Evaluate the following JSON response for adherence to the expected schema and validity:\n{response_text}"
-    feedback_obj = evaluator.invoke([HumanMessage(content=evaluation_prompt)])
-    return feedback_obj
+    try:
+        evaluation_prompt = (
+            f"Evaluate the following JSON response. Verify that it adheres to the expected schema "
+            f"and is valid JSON. Additionally, assess whether the answer provided by the LLM fully "
+            f"addresses the user question with sufficient detail and clarity. Provide a grade of "
+            f"'acceptable' or 'not acceptable' and include feedback for improvement if necessary:\n"
+            f"{response_text}"
+        )
+        feedback_obj = evaluator.invoke([HumanMessage(content=evaluation_prompt)])
+        return feedback_obj
+    except Exception as e:
+        print(f"Error during evaluation: {e}")
+        return None
 
 # --- Existing Workflow Tasks ---
 @task
@@ -181,23 +225,44 @@ def document_analysis_workflow(state: dict):
     project_name = os.path.basename(os.path.normpath(folder_path))
     
     # Step 1: Extract text from the folder
-    full_text = extract_text_task(folder_path).result()
+    try:
+        full_text = extract_text_task(folder_path).result()
+    except Exception as e:
+        return {"error": f"Failed during text extraction: {e}"}
     
     # Step 2: Split text into manageable chunks
-    chunks = split_text_task(full_text).result()
+    try:
+        chunks = split_text_task(full_text).result()
+    except Exception as e:
+        return {"error": f"Failed during text splitting: {e}"}
     
     # Step 3: Build a vector store from the chunks
     vectorstore = vector_store_task(chunks).result()
+    if vectorstore is None:
+        return {"error": "Vector store creation failed."}
     
     # Step 4: Retrieve the most relevant chunks based on the user question
-    retrieved_chunks = retrieve_chunks_task(vectorstore, user_question).result()
+    try:
+        retrieved_chunks = retrieve_chunks_task(vectorstore, user_question).result()
+    except Exception as e:
+        return {"error": f"Failed during chunk retrieval: {e}"}
     
-    # Evaluator-Optimizer loop
+    # Evaluator-Optimizer loop with maximum iterations to avoid infinite loops
     feedback = None
-    while True:
-        # Generate a JSON response (incorporating feedback if any)
-        llm_response = llm_generate_analysis_task(retrieved_chunks, user_question, feedback).result()
-        response_text = llm_response.content.strip()
+    max_iterations = 5
+    iteration = 0
+    result_json = None
+
+    while iteration < max_iterations:
+        iteration += 1
+        try:
+            # Generate a JSON response (incorporating feedback if any)
+            llm_response = llm_generate_analysis_task(retrieved_chunks, user_question, feedback).result()
+            response_text = llm_response.content.strip()
+        except Exception as e:
+            feedback = f"LLM generation error: {e}"
+            continue
+
         if response_text.startswith("```"):
             parts = response_text.split("```")
             if len(parts) >= 3:
@@ -205,15 +270,17 @@ def document_analysis_workflow(state: dict):
                 if json_text.lower().startswith("json"):
                     json_text = json_text[4:].strip()
                 response_text = json_text
-        
-        # Evaluate the JSON response
-        eval_feedback = llm_evaluation_task(response_text).result()
+
         try:
-            # Attempt to get structured feedback as a dict
-            eval_data = eval_feedback.model_dump() if hasattr(eval_feedback, "model_dump") else json.loads(eval_feedback.content)
+            # Evaluate the JSON response
+            eval_feedback = llm_evaluation_task(response_text).result()
+            eval_data = (
+                eval_feedback.model_dump() if hasattr(eval_feedback, "model_dump") 
+                else json.loads(eval_feedback.content)
+            )
         except Exception as e:
             eval_data = {"grade": "not acceptable", "feedback": "Evaluation parsing error."}
-        
+
         if eval_data.get("grade") == "acceptable":
             try:
                 result_json = json.loads(response_text)
@@ -223,7 +290,10 @@ def document_analysis_workflow(state: dict):
         else:
             # Use the evaluator's feedback to improve the next generation
             feedback = eval_data.get("feedback", "Please improve the response.")
-            print(f"Feedback from evaluator: {feedback}")
+            print(f"Iteration {iteration} feedback from evaluator: {feedback}")
+    
+    if result_json is None:
+        return {"error": "Maximum iterations reached without acceptable response."}
     
     # Add the project name to the final JSON result
     return {"project_name": project_name, "result": result_json}
