@@ -8,6 +8,7 @@ import pdfplumber
 import logging
 from typing import Literal
 from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.prompts import PromptTemplate
@@ -18,28 +19,38 @@ from langchain.schema import HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.func import entrypoint, task
 
-from dotenv import load_dotenv
-load_dotenv()
+# --- Configuration Using Pydantic BaseSettings ---
+class Settings(BaseSettings):
+    open_ai_api_key: str
+    lang_smith_tracing: str
+    lang_smith_endpoint: str
+    lang_smith_api_key: str
+    lang_smith_project_name: str
+    chunk_size: int = 1000
+    chunk_overlap: int = 500
+    max_iterations: int = 5
+    folder_path: str
+    output_folder: str
+    thread_id: str = "unique_thread_id"
 
-# Configure logging
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+
+# --- Set Environment Variables for External Libraries (if needed) ---
+os.environ["OPENAI_API_KEY"] = settings.open_ai_api_key
+os.environ["LANGSMITH_TRACING"] = settings.lang_smith_tracing
+os.environ["LANGSMITH_ENDPOINT"] = settings.lang_smith_endpoint
+os.environ["LANGSMITH_API_KEY"] = settings.lang_smith_api_key
+os.environ["LANGSMITH_PROJECT"] = settings.lang_smith_project_name
+
+# --- Logging Setup ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-# --- Environment Setup ---
-open_ai_api_key = os.getenv("OPENAI_API_KEY")
-lang_smith_tracing = os.getenv("LANGSMITH_TRACING")
-lang_smith_endpoint = os.getenv("LANGSMITH_ENDPOINT")
-lang_smith_api_key = os.getenv("LANGSMITH_API_KEY")
-lang_smith_project_name = os.getenv("LANGSMITH_PROJECT")
-
-os.environ["OPENAI_API_KEY"] = open_ai_api_key
-os.environ["LANGSMITH_TRACING"] = lang_smith_tracing
-os.environ["LANGSMITH_ENDPOINT"] = lang_smith_endpoint
-os.environ["LANGSMITH_API_KEY"] = lang_smith_api_key
-os.environ["LANGSMITH_PROJECT"] = lang_smith_project_name
 
 # --- Evaluator Schema and LLM Setup ---
 class AnalysisFeedback(BaseModel):
@@ -121,7 +132,11 @@ def process_folder(folder_path):
         logger.error(f"Error processing folder {folder_path}: {e}")
     return "\n".join(all_texts)
 
-def split_text(text, chunk_size=1000, chunk_overlap=500):
+def split_text(text, chunk_size: int = None, chunk_overlap: int = None):
+    if chunk_size is None:
+        chunk_size = settings.chunk_size
+    if chunk_overlap is None:
+        chunk_overlap = settings.chunk_overlap
     try:
         splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         return splitter.split_text(text)
@@ -220,7 +235,8 @@ def retrieve_chunks_task(vectorstore, query: str):
 # --- Main Workflow ---
 @entrypoint()
 def document_analysis_workflow(state: dict):
-    folder_path = state["folder_path"]
+    # Use folder_path from state or fall back to settings
+    folder_path = state.get("folder_path", settings.folder_path)
     user_question = state["user_question"]
     project_name = os.path.basename(os.path.normpath(folder_path))
     
@@ -244,7 +260,7 @@ def document_analysis_workflow(state: dict):
         return {"error": f"Failed during chunk retrieval: {e}"}
     
     feedback = None
-    max_iterations = 5
+    max_iterations = settings.max_iterations
     iteration = 0
     result_json = None
 
@@ -291,20 +307,20 @@ def document_analysis_workflow(state: dict):
 
 # --- Sample Invocation ---
 if __name__ == "__main__":
-    folder_path = "/path/to/your/project/folder"  
+    # If not provided via command line or another method, use settings.folder_path and settings.output_folder
+    folder_path = settings.folder_path  
     user_question = (
         "Based on the project description extracted from the documents, "
         "provide details on the project description, team recommendation, techstack, roles, and required experience."
     )
     input_state = {"folder_path": folder_path, "user_question": user_question}
-    config = {"configurable": {"thread_id": "unique_thread_id"}}
+    config = {"configurable": {"thread_id": settings.thread_id}}
 
     final_result = document_analysis_workflow.invoke(input_state, config=config)
     
-    output_folder = "/path/to/output/folder"
-    os.makedirs(output_folder, exist_ok=True)
+    os.makedirs(settings.output_folder, exist_ok=True)
     folder_name = os.path.basename(os.path.normpath(folder_path))
-    output_file = os.path.join(output_folder, folder_name + ".json")
+    output_file = os.path.join(settings.output_folder, folder_name + ".json")
 
     with open(output_file, "w") as f:
         json.dump(final_result, f, indent=2)
