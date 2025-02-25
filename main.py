@@ -155,7 +155,7 @@ def build_vector_store(chunks):
         logger.error(f"Error building vector store: {e}")
         return None
 
-def retrieve_relevant_chunks(vectorstore, query, k=5):
+def retrieve_relevant_chunks(vectorstore, query, k=10):
     try:
         return vectorstore.similarity_search(query, k=k)
     except Exception as e:
@@ -232,7 +232,7 @@ def vector_store_task(chunks):
 
 @task
 def retrieve_chunks_task(vectorstore, query: str):
-    return retrieve_relevant_chunks(vectorstore, query, k=5)
+    return retrieve_relevant_chunks(vectorstore, query, k=10)
 
 # --- Main Workflow ---
 @entrypoint()
