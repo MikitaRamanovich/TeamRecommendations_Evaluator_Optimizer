@@ -122,7 +122,7 @@ def split_text(text, chunk_size=1000, chunk_overlap=500):
 
 def build_vector_store(chunks):
     try:
-        embeddings = OpenAIEmbeddings()  # Or choose another embedding provider
+        embeddings = OpenAIEmbeddings() 
         vectorstore = FAISS.from_texts(chunks, embeddings)
         return vectorstore
     except Exception as e:
@@ -300,12 +300,10 @@ def document_analysis_workflow(state: dict):
 
 # --- Sample Invocation ---
 if __name__ == "__main__":
-    folder_path = "/Users/mikita/Projects/Agents/TeamRecommendations_Evaluator_Optimizer/Description/Zava"  
+    folder_path = "/Users/mikita/Projects/Agents/TeamRecommendations_Evaluator_Optimizer/Description/[Lead] EVRE - AI chatbot"  
     user_question = (
         "Based on the project description extracted from the documents, "
-        "please generate a JSON object with keys 'project_description' and 'team_recommendation'. "
-        "The 'team_recommendation' should include the following fields for each recommendation: "
-        "role, techstack, experience, and rationale."
+        "give me information related to project description, team recommendation, techstack, roles, experience. "
     )
     input_state = {"folder_path": folder_path, "user_question": user_question}
     config = {"configurable": {"thread_id": "unique_thread_id"}}  # Provide a unique thread id
