@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     folder_path: str
     output_folder: str
     thread_id: str = "unique_thread_id"
+    llm_model: str = "gpt-4o-mini"
+    temperature: int = 0
 
     class Config:
         env_file = ".env"
@@ -61,7 +63,7 @@ class AnalysisFeedback(BaseModel):
         description="If the response is not acceptable, provide feedback on how to improve it."
     )
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+llm = ChatOpenAI(model=settings.llm_model, temperature=settings.temperature)
 evaluator = llm.with_structured_output(AnalysisFeedback)
 
 # --- Utility Functions for File Extraction ---
