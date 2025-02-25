@@ -148,7 +148,7 @@ def split_text(text, chunk_size: int = None, chunk_overlap: int = None):
 
 def build_vector_store(chunks):
     try:
-        embeddings = OpenAIEmbeddings() 
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-large") 
         vectorstore = FAISS.from_texts(chunks, embeddings)
         return vectorstore
     except Exception as e:
@@ -311,9 +311,11 @@ def document_analysis_workflow(state: dict):
 if __name__ == "__main__":
     # If not provided via command line or another method, use settings.folder_path and settings.output_folder
     folder_path = settings.folder_path  
+
     user_question = (
-        "Based on the project description extracted from the documents, "
-        "provide details on the project description, team recommendation, techstack, roles, and required experience."
+        "Using the extracted project description, analyze the project requirements and propose a detailed team recommendation. "
+        "Your answer should include a concise summary of the project and a list of recommended roles needed to develop it. "
+        "For each role, specify the role name, the relevant tech stack (a list of technologies), the required level of experience (e.g., years of experience or proficiency), and a clear rationale explaining why that role is critical. "
     )
     input_state = {"folder_path": folder_path, "user_question": user_question}
     config = {"configurable": {"thread_id": settings.thread_id}}
