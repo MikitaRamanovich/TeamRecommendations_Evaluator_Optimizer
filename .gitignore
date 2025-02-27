@@ -6,3 +6,5 @@ folders
 Result
 Description
 *.zip
+.*json
+.DS_Store
