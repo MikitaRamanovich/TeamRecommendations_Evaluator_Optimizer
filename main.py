@@ -20,6 +20,8 @@ from langchain_openai import ChatOpenAI
 from langgraph.func import entrypoint, task
 
 # --- Configuration Using Pydantic BaseSettings ---
+
+
 class Settings(BaseSettings):
     open_ai_api_key: str
     lang_smith_tracing: str
@@ -36,7 +38,8 @@ class Settings(BaseSettings):
     temperature: int = 0
 
     class Config:
-        env_file = ".env"
+        env_file = os.path.join(os.path.dirname(__file__), ".env")
+
 
 settings = Settings()
 
@@ -55,6 +58,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Evaluator Schema and LLM Setup ---
+
+
 class AnalysisFeedback(BaseModel):
     grade: Literal["acceptable", "not acceptable"] = Field(
         description="Grade the generated JSON response."
@@ -63,10 +68,13 @@ class AnalysisFeedback(BaseModel):
         description="If the response is not acceptable, provide feedback on how to improve it."
     )
 
+
 llm = ChatOpenAI(model=settings.llm_model, temperature=settings.temperature)
 evaluator = llm.with_structured_output(AnalysisFeedback)
 
 # --- Utility Functions for File Extraction ---
+
+
 def extract_text_docx(file_path):
     try:
         doc = docx.Document(file_path)
@@ -74,6 +82,7 @@ def extract_text_docx(file_path):
     except Exception as e:
         logger.error(f"Error extracting DOCX from {file_path}: {e}")
         return ""
+
 
 def extract_text_pdf(file_path):
     text = ""
@@ -87,6 +96,7 @@ def extract_text_pdf(file_path):
         logger.error(f"Error extracting PDF from {file_path}: {e}")
     return text
 
+
 def extract_text_excel(file_path):
     try:
         df = pd.read_excel(file_path)
@@ -94,6 +104,7 @@ def extract_text_excel(file_path):
     except Exception as e:
         logger.error(f"Error extracting Excel from {file_path}: {e}")
         return ""
+
 
 def extract_text_from_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
@@ -105,6 +116,7 @@ def extract_text_from_file(file_path):
         return extract_text_excel(file_path)
     else:
         return ""
+
 
 def process_folder(folder_path):
     """
@@ -124,15 +136,18 @@ def process_folder(folder_path):
                                 extracted_text = process_folder(temp_folder)
                                 all_texts.append(extracted_text)
                     except Exception as e:
-                        logger.error(f"Error processing zip file {file_path}: {e}")
+                        logger.error(
+                            f"Error processing zip file {file_path}: {e}")
                 else:
                     text = extract_text_from_file(file_path)
                     if text:
-                        logger.info(f"Extracted text from {file_path} (length {len(text)} characters)")
+                        logger.info(
+                            f"Extracted text from {file_path} (length {len(text)} characters)")
                         all_texts.append(text)
     except Exception as e:
         logger.error(f"Error processing folder {folder_path}: {e}")
     return "\n".join(all_texts)
+
 
 def split_text(text, chunk_size: int = None, chunk_overlap: int = None):
     if chunk_size is None:
@@ -140,20 +155,23 @@ def split_text(text, chunk_size: int = None, chunk_overlap: int = None):
     if chunk_overlap is None:
         chunk_overlap = settings.chunk_overlap
     try:
-        splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         return splitter.split_text(text)
     except Exception as e:
         logger.error(f"Error splitting text: {e}")
         return []
 
+
 def build_vector_store(chunks):
     try:
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-large") 
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
         vectorstore = FAISS.from_texts(chunks, embeddings)
         return vectorstore
     except Exception as e:
         logger.error(f"Error building vector store: {e}")
         return None
+
 
 def retrieve_relevant_chunks(vectorstore, query, k=10):
     try:
@@ -161,6 +179,7 @@ def retrieve_relevant_chunks(vectorstore, query, k=10):
     except Exception as e:
         logger.error(f"Error retrieving relevant chunks: {e}")
         return []
+
 
 def generate_json_response(retrieved_chunks, user_question, feedback=None):
     context = "\n".join([doc.page_content for doc in retrieved_chunks])
@@ -188,8 +207,10 @@ def generate_json_response(retrieved_chunks, user_question, feedback=None):
         "}}"
     )
     try:
-        prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question", "feedback_text"])
-        prompt_text = prompt.format(context=context, question=user_question, feedback_text=feedback_text)
+        prompt = PromptTemplate(template=prompt_template, input_variables=[
+                                "context", "question", "feedback_text"])
+        prompt_text = prompt.format(
+            context=context, question=user_question, feedback_text=feedback_text)
         response = llm.invoke([HumanMessage(content=prompt_text)])
         return response
     except Exception as e:
@@ -197,9 +218,12 @@ def generate_json_response(retrieved_chunks, user_question, feedback=None):
         return None
 
 # --- Tasks for Evaluator–Optimizer Approach ---
+
+
 @task
 def llm_generate_analysis_task(retrieved_chunks, user_question, feedback: str = None):
     return generate_json_response(retrieved_chunks, user_question, feedback)
+
 
 @task
 def llm_evaluation_task(response_text: str):
@@ -211,56 +235,65 @@ def llm_evaluation_task(response_text: str):
             f"'acceptable' or 'not acceptable' and include feedback for improvement if necessary:\n"
             f"{response_text}"
         )
-        feedback_obj = evaluator.invoke([HumanMessage(content=evaluation_prompt)])
+        feedback_obj = evaluator.invoke(
+            [HumanMessage(content=evaluation_prompt)])
         return feedback_obj
     except Exception as e:
         logger.error(f"Error during evaluation: {e}")
         return None
 
 # --- Workflow Tasks ---
+
+
 @task
 def extract_text_task(folder_path: str):
     return process_folder(folder_path)
+
 
 @task
 def split_text_task(text: str):
     return split_text(text)
 
+
 @task
 def vector_store_task(chunks):
     return build_vector_store(chunks)
+
 
 @task
 def retrieve_chunks_task(vectorstore, query: str):
     return retrieve_relevant_chunks(vectorstore, query, k=10)
 
 # --- Main Workflow ---
+
+
 @entrypoint()
 def document_analysis_workflow(state: dict):
     # Use folder_path from state or fall back to settings
     folder_path = state.get("folder_path", settings.folder_path)
     user_question = state["user_question"]
     project_name = os.path.basename(os.path.normpath(folder_path))
-    
+
     try:
         full_text = extract_text_task(folder_path).result()
     except Exception as e:
         return {"error": f"Failed during text extraction: {e}"}
-    
+
     try:
         chunks = split_text_task(full_text).result()
     except Exception as e:
         return {"error": f"Failed during text splitting: {e}"}
-    
+
     vectorstore = vector_store_task(chunks).result()
     if vectorstore is None:
         return {"error": "Vector store creation failed."}
-    
+
     try:
-        retrieved_chunks = retrieve_chunks_task(vectorstore, user_question).result()
+        retrieved_chunks = retrieve_chunks_task(
+            vectorstore, user_question).result()
     except Exception as e:
         return {"error": f"Failed during chunk retrieval: {e}"}
-    
+
     feedback = None
     max_iterations = settings.max_iterations
     iteration = 0
@@ -269,7 +302,8 @@ def document_analysis_workflow(state: dict):
     while iteration < max_iterations:
         iteration += 1
         try:
-            llm_response = llm_generate_analysis_task(retrieved_chunks, user_question, feedback).result()
+            llm_response = llm_generate_analysis_task(
+                retrieved_chunks, user_question, feedback).result()
             response_text = llm_response.content.strip()
         except Exception as e:
             feedback = f"LLM generation error: {e}"
@@ -286,31 +320,36 @@ def document_analysis_workflow(state: dict):
         try:
             eval_feedback = llm_evaluation_task(response_text).result()
             eval_data = (
-                eval_feedback.model_dump() if hasattr(eval_feedback, "model_dump") 
+                eval_feedback.model_dump() if hasattr(eval_feedback, "model_dump")
                 else json.loads(eval_feedback.content)
             )
         except Exception as e:
-            eval_data = {"grade": "not acceptable", "feedback": "Evaluation parsing error."}
+            eval_data = {"grade": "not acceptable",
+                         "feedback": "Evaluation parsing error."}
 
         if eval_data.get("grade") == "acceptable":
             try:
                 result_json = json.loads(response_text)
             except json.JSONDecodeError as e:
-                result_json = {"error": "Invalid JSON response", "response": response_text}
+                result_json = {"error": "Invalid JSON response",
+                               "response": response_text}
             break
         else:
-            feedback = eval_data.get("feedback", "Please improve the response.")
-            logger.info(f"Iteration {iteration} feedback from evaluator: {feedback}")
-    
+            feedback = eval_data.get(
+                "feedback", "Please improve the response.")
+            logger.info(
+                f"Iteration {iteration} feedback from evaluator: {feedback}")
+
     if result_json is None:
         return {"error": "Maximum iterations reached without acceptable response."}
-    
-    return {"project_name": project_name, "result": result_json}
+
+    return result_json
+
 
 # --- Sample Invocation ---
 if __name__ == "__main__":
     # If not provided via command line or another method, use settings.folder_path and settings.output_folder
-    folder_path = settings.folder_path  
+    folder_path = settings.folder_path
 
     user_question = (
         "Using the extracted project description, analyze the project requirements and propose a detailed team recommendation. "
@@ -320,8 +359,9 @@ if __name__ == "__main__":
     input_state = {"folder_path": folder_path, "user_question": user_question}
     config = {"configurable": {"thread_id": settings.thread_id}}
 
-    final_result = document_analysis_workflow.invoke(input_state, config=config)
-    
+    final_result = document_analysis_workflow.invoke(
+        input_state, config=config)
+
     os.makedirs(settings.output_folder, exist_ok=True)
     folder_name = os.path.basename(os.path.normpath(folder_path))
     output_file = os.path.join(settings.output_folder, folder_name + ".json")
